@@ -1,0 +1,6 @@
+{
+  "name": "HTML Web Host & Viewer",
+  "description": "Upload HTML files to run, preview, and host online with Google Drive integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
