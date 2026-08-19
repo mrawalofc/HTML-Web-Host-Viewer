@@ -10,15 +10,24 @@ import {
   AlignLeft,
   X,
   Palette,
-  Crosshair
+  Crosshair,
+  Wand2,
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
 import { FloatingColorPicker } from './FloatingColorPicker';
+import { CssLintPanel } from './CssLintPanel';
 import {
   detectColorsInCode,
   findColorAtCursor,
   DetectedColor
 } from '../services/colorUtils';
-import { InspectedElement, ElementLocation } from '../types';
+import { formatHtmlCode } from '../services/codeFormatter';
+import { lintCssCode } from '../services/cssLinter';
+import { InspectedElement, ElementLocation, CssLintDiagnostic } from '../types';
 
 interface CodeEditorProps {
   code: string;
@@ -44,6 +53,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   onClearFocusedElement,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [isFormatted, setIsFormatted] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
@@ -53,11 +63,39 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [selectedColor, setSelectedColor] = useState<DetectedColor | null>(null);
 
+  // CSS Linter state
+  const [isLintPanelOpen, setIsLintPanelOpen] = useState(false);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
 
   const lines = code.split('\n');
   const totalLines = lines.length;
+
+  // Real-time CSS Linting Analysis
+  const cssDiagnostics = useMemo(() => {
+    return lintCssCode(code);
+  }, [code]);
+
+  const errorCount = useMemo(
+    () => cssDiagnostics.filter((d) => d.severity === 'error').length,
+    [cssDiagnostics]
+  );
+  const warningCount = useMemo(
+    () => cssDiagnostics.filter((d) => d.severity === 'warning').length,
+    [cssDiagnostics]
+  );
+
+  // Map diagnostics by line number for O(1) gutter markers
+  const lineDiagnosticsMap = useMemo(() => {
+    const map = new Map<number, CssLintDiagnostic[]>();
+    for (const diag of cssDiagnostics) {
+      const existing = map.get(diag.line) || [];
+      existing.push(diag);
+      map.set(diag.line, existing);
+    }
+    return map;
+  }, [cssDiagnostics]);
 
   // Jump to & focus element in code editor when focusedElementLocation updates
   useEffect(() => {
@@ -134,6 +172,18 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       return;
     }
 
+    // Format Code on Shift+Alt+F or Ctrl+Alt+F or Cmd+Alt+F
+    if (e.shiftKey && e.altKey && (e.key === 'F' || e.key === 'f')) {
+      e.preventDefault();
+      handleFormatCode();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'f' || e.key === 'F')) {
+      e.preventDefault();
+      handleFormatCode();
+      return;
+    }
+
     // Toggle search on Ctrl+F / Cmd+F
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
@@ -171,34 +221,20 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
   const handleFormatCode = () => {
     try {
-      // Basic formatting / indenting for HTML tags
-      let formatted = '';
-      let indentLevel = 0;
-      const clean = code.replace(/>\s*</g, '>\n<').split('\n');
+      const formatted = formatHtmlCode(code, {
+        indentSize: 2,
+        preserveNewlines: true,
+        wrapLineLength: 0,
+      });
 
-      for (let rawLine of clean) {
-        let line = rawLine.trim();
-        if (!line) continue;
-
-        if (line.match(/^<\/\w/)) {
-          indentLevel = Math.max(0, indentLevel - 1);
-        }
-
-        formatted += '  '.repeat(indentLevel) + line + '\n';
-
-        if (
-          line.match(/^<\w[^>]*[^\/]>$/) &&
-          !line.startsWith('<!') &&
-          !line.startsWith('<?') &&
-          !line.match(/^<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)/i)
-        ) {
-          indentLevel++;
-        }
+      if (formatted && formatted !== code) {
+        onChange(formatted);
       }
 
-      onChange(formatted.trimEnd());
+      setIsFormatted(true);
+      setTimeout(() => setIsFormatted(false), 2000);
     } catch (e) {
-      console.warn('Formatting fallback', e);
+      console.warn('Formatting error:', e);
     }
   };
 
@@ -267,6 +303,28 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     return findColorAtCursor(code, selStart, selEnd, detectedColors);
   }, [code, cursorPos, detectedColors]);
 
+  // Jump to specific line and column in textarea
+  const handleJumpToLine = (targetLine: number, targetCol: number = 1) => {
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+      let currentIdx = 0;
+      for (let i = 0; i < targetLine - 1 && i < lines.length; i++) {
+        currentIdx += lines[i].length + 1;
+      }
+      const targetIdx = Math.min(code.length, currentIdx + Math.max(0, targetCol - 1));
+      const lineEndIdx = currentIdx + (lines[targetLine - 1]?.length || 0);
+
+      textareaRef.current.selectionStart = targetIdx;
+      textareaRef.current.selectionEnd = lineEndIdx > targetIdx ? lineEndIdx : targetIdx;
+
+      const lineHeight = 20;
+      const targetScroll = Math.max(0, (targetLine - 5) * lineHeight);
+      textareaRef.current.scrollTop = targetScroll;
+
+      setCursorPos({ line: targetLine, col: targetCol });
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-950 border-r border-slate-800 text-slate-200 overflow-hidden select-none relative">
       {/* Floating Color Picker Component */}
@@ -277,6 +335,16 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         detectedColors={detectedColors}
         onReplaceColor={handleReplaceColor}
         onSelectColorIndex={handleSelectColorIndex}
+      />
+
+      {/* Real-time CSS Lint Diagnostics Panel */}
+      <CssLintPanel
+        isOpen={isLintPanelOpen}
+        onClose={() => setIsLintPanelOpen(false)}
+        diagnostics={cssDiagnostics}
+        onJumpToLine={(line, col) => {
+          handleJumpToLine(line, col);
+        }}
       />
 
       {/* Editor Header Toolbar */}
@@ -292,6 +360,41 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {/* CSS Real-Time Linter Button */}
+          <button
+            onClick={() => setIsLintPanelOpen(!isLintPanelOpen)}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-all ${
+              isLintPanelOpen
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                : errorCount > 0
+                ? 'bg-rose-950/60 text-rose-300 border border-rose-700/60 hover:bg-rose-900/60'
+                : warningCount > 0
+                ? 'bg-amber-950/60 text-amber-300 border border-amber-700/60 hover:bg-amber-900/60'
+                : 'text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60'
+            }`}
+            title={`Real-Time CSS Linter (${errorCount} errors, ${warningCount} warnings)`}
+          >
+            {errorCount > 0 ? (
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+            ) : warningCount > 0 ? (
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+            ) : (
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            <span className="font-medium hidden md:inline">CSS Lint</span>
+            {cssDiagnostics.length > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full font-mono text-[10px] ${
+                  errorCount > 0
+                    ? 'bg-rose-900 text-rose-200 border border-rose-700'
+                    : 'bg-amber-900 text-amber-200 border border-amber-700'
+                }`}
+              >
+                {cssDiagnostics.length}
+              </span>
+            )}
+          </button>
+
           {/* Color Picker Toggle Button */}
           <button
             onClick={() => {
@@ -318,30 +421,44 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             )}
           </button>
 
+          {/* Format Code Button */}
+          <button
+            onClick={handleFormatCode}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all ${
+              isFormatted
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                : 'text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60'
+            }`}
+            title="Format Code & Indent HTML (Shift+Alt+F)"
+          >
+            {isFormatted ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="font-medium text-emerald-300">Formatted</span>
+              </>
+            ) : (
+              <>
+                <Wand2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="font-medium hidden sm:inline">Format</span>
+              </>
+            )}
+          </button>
+
           {/* Search Toggle */}
           <button
             onClick={() => setShowSearch(!showSearch)}
-            className={`p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors ${
-              showSearch ? 'bg-slate-800 text-cyan-400' : ''
+            className={`p-1.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-transparent transition-colors ${
+              showSearch ? 'bg-slate-800 text-cyan-400 border-cyan-500/30' : ''
             }`}
             title="Search & Replace (Ctrl+F)"
           >
             <Search className="w-3.5 h-3.5" />
           </button>
 
-          {/* Quick Format */}
-          <button
-            onClick={handleFormatCode}
-            className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-            title="Format HTML & Indent"
-          >
-            <AlignLeft className="w-3.5 h-3.5" />
-          </button>
-
           {/* Copy Code */}
           <button
             onClick={handleCopy}
-            className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
             title="Copy Source Code"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -420,16 +537,48 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Code Text Area with Line Numbers */}
       <div className="relative flex-1 flex overflow-hidden font-mono text-[13px] leading-relaxed">
-        {/* Line Numbers */}
+        {/* Line Numbers with CSS Diagnostics Markers */}
         <div
           ref={lineNumbersRef}
-          className="w-12 bg-slate-950/90 text-slate-600 text-right pr-3 pt-3 select-none overflow-hidden border-r border-slate-900 shrink-0 font-mono"
+          className="w-14 bg-slate-950/90 text-slate-600 text-right pr-2 pt-3 select-none overflow-hidden border-r border-slate-900 shrink-0 font-mono"
         >
-          {lines.map((_, i) => (
-            <div key={i} className="h-5 leading-5 text-[11px]">
-              {i + 1}
-            </div>
-          ))}
+          {lines.map((_, i) => {
+            const lineNum = i + 1;
+            const diags = lineDiagnosticsMap.get(lineNum);
+            const hasError = diags?.some((d) => d.severity === 'error');
+            const hasWarning = diags?.some((d) => d.severity === 'warning');
+
+            return (
+              <div
+                key={i}
+                className="h-5 leading-5 text-[11px] flex items-center justify-end gap-1.5 group cursor-pointer hover:text-slate-300"
+                onClick={() => {
+                  if (diags && diags.length > 0) {
+                    setIsLintPanelOpen(true);
+                  }
+                  handleJumpToLine(lineNum);
+                }}
+                title={
+                  diags && diags.length > 0
+                    ? diags.map((d) => `[${d.severity.toUpperCase()}] ${d.message}`).join('\n')
+                    : undefined
+                }
+              >
+                {hasError ? (
+                  <span
+                    className="w-2 h-2 rounded-full bg-rose-500 shadow-sm shadow-rose-500/80 shrink-0 animate-pulse"
+                    title={`CSS Error: ${diags?.find((d) => d.severity === 'error')?.message}`}
+                  />
+                ) : hasWarning ? (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"
+                    title={`CSS Warning: ${diags?.find((d) => d.severity === 'warning')?.message}`}
+                  />
+                ) : null}
+                <span>{lineNum}</span>
+              </div>
+            );
+          })}
         </div>
 
         {/* Textarea */}
@@ -452,11 +601,46 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Editor Status Bar */}
       <div className="bg-slate-900 border-t border-slate-800 px-3 py-1 text-[11px] text-slate-400 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <span>
             Ln {cursorPos.line}, Col {cursorPos.col}
           </span>
           <span>HTML5 / UTF-8</span>
+
+          {/* Interactive CSS Diagnostics Status Pill */}
+          <button
+            onClick={() => setIsLintPanelOpen(!isLintPanelOpen)}
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10.5px] transition-colors border ${
+              errorCount > 0
+                ? 'bg-rose-950/70 border-rose-800/60 text-rose-300 hover:bg-rose-900/80 shadow-sm shadow-rose-950'
+                : warningCount > 0
+                ? 'bg-amber-950/70 border-amber-800/60 text-amber-300 hover:bg-amber-900/80 shadow-sm shadow-amber-950'
+                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+            }`}
+            title="Click to toggle CSS Diagnostics Inspector"
+          >
+            {errorCount > 0 ? (
+              <>
+                <AlertCircle className="w-3 h-3 text-rose-400" />
+                <span className="font-medium font-mono">
+                  {errorCount} {errorCount === 1 ? 'Error' : 'Errors'}
+                  {warningCount > 0 ? `, ${warningCount} Warn` : ''}
+                </span>
+              </>
+            ) : warningCount > 0 ? (
+              <>
+                <AlertTriangle className="w-3 h-3 text-amber-400" />
+                <span className="font-medium font-mono">
+                  {warningCount} {warningCount === 1 ? 'Warning' : 'Warnings'}
+                </span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                <span>CSS Clean</span>
+              </>
+            )}
+          </button>
 
           {/* Focused DOM Element indicator */}
           {focusedElement && (

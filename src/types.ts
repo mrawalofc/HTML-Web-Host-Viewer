@@ -87,6 +87,21 @@ export interface InspectedElement {
   sourceLine?: number;
 }
 
+export type LintSeverity = 'error' | 'warning' | 'info';
+
+export interface CssLintDiagnostic {
+  id: string;
+  line: number;
+  column: number;
+  endColumn?: number;
+  severity: LintSeverity;
+  message: string;
+  rule: string;
+  snippet?: string;
+  suggestion?: string;
+  isInlineStyle?: boolean;
+}
+
 export interface ElementLocation {
   startIndex: number;
   endIndex: number;
