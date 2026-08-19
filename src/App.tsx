@@ -34,6 +34,25 @@ export default function App() {
   const [currentDriveId, setCurrentDriveId] = useState<string | undefined>(undefined);
   const [driveWebViewLink, setDriveWebViewLink] = useState<string | undefined>(undefined);
   const [isSavingDrive, setIsSavingDrive] = useState<boolean>(false);
+  const [driveModalTab, setDriveModalTab] = useState<'browse' | 'save' | 'settings'>('browse');
+
+  // Google Drive Auto-Save state
+  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('htmlhost_drive_autosave');
+      return saved !== null ? saved === 'true' : false;
+    } catch {
+      return false;
+    }
+  });
+  const [isAutoSaving, setIsAutoSaving] = useState<boolean>(false);
+  const [lastAutoSavedTime, setLastAutoSavedTime] = useState<string | null>(null);
+
+  // Refs for tracking active typing and auto-save cooldown
+  const lastSavedCodeRef = useRef<string>(STARTER_TEMPLATES[0].html);
+  const lastTypedTimeRef = useRef<number>(0);
+  const lastAutoSaveAttemptRef = useRef<number>(0);
+  const isSavingRef = useRef<boolean>(false);
 
   // Console output log state
   const [consoleMessages, setConsoleMessages] = useState<ConsoleMessage[]>([]);
@@ -76,6 +95,76 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Track code changes and mark active typing timestamp
+  const handleCodeChange = (newCode: string) => {
+    setCode(newCode);
+    lastTypedTimeRef.current = Date.now();
+  };
+
+  // Background Auto-Save to Google Drive effect: triggers every 30s while actively typing
+  useEffect(() => {
+    if (!isAutoSaveEnabled || !user) return;
+
+    const autoSaveInterval = setInterval(async () => {
+      const now = Date.now();
+      const hasUnsavedChanges = code !== lastSavedCodeRef.current;
+      const isActivelyTyping = now - lastTypedTimeRef.current < 45000; // Typed within the last 45 seconds
+      const elapsedSinceLastSave = now - lastAutoSaveAttemptRef.current;
+
+      if (hasUnsavedChanges && isActivelyTyping && elapsedSinceLastSave >= 30000 && !isSavingRef.current) {
+        isSavingRef.current = true;
+        lastAutoSaveAttemptRef.current = now;
+        setIsAutoSaving(true);
+
+        try {
+          const token = await getAccessToken();
+          if (!token) throw new Error('Not authenticated');
+
+          const result = await saveHtmlToDrive(fileName, code, token, currentDriveId);
+          setCurrentDriveId(result.id);
+          setDriveWebViewLink(result.webViewLink);
+          lastSavedCodeRef.current = code;
+
+          const timeString = new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          });
+          setLastAutoSavedTime(timeString);
+        } catch (err: any) {
+          console.warn('Background auto-save to Google Drive encountered an error:', err);
+        } finally {
+          setIsAutoSaving(false);
+          isSavingRef.current = false;
+        }
+      }
+    }, 2500);
+
+    return () => clearInterval(autoSaveInterval);
+  }, [isAutoSaveEnabled, user, code, fileName, currentDriveId]);
+
+  // Toggle Auto-Save setting
+  const handleToggleAutoSave = (enabled: boolean) => {
+    setIsAutoSaveEnabled(enabled);
+    try {
+      localStorage.setItem('htmlhost_drive_autosave', String(enabled));
+    } catch {
+      // ignore
+    }
+    if (enabled) {
+      lastAutoSaveAttemptRef.current = 0; // trigger soon after typing
+      if (!user) {
+        setDriveModalTab('settings');
+        setIsDriveOpen(true);
+        showToast('Connect Google Drive to enable background auto-saving', 'error');
+      } else {
+        showToast('Auto-Save enabled (saves every 30s while typing)', 'success');
+      }
+    } else {
+      showToast('Auto-Save disabled', 'success');
+    }
+  };
+
   // Auto-run debounce timer
   useEffect(() => {
     if (!autoRun) return;
@@ -110,6 +199,8 @@ export default function App() {
     setLiveCode(file.content);
     setCurrentDriveId(file.driveFileId);
     setDriveWebViewLink(file.driveWebViewLink);
+    lastSavedCodeRef.current = file.content;
+    lastAutoSaveAttemptRef.current = Date.now();
     setConsoleMessages([]);
     showToast(`Loaded ${file.name} successfully!`, 'success');
   };
@@ -120,6 +211,8 @@ export default function App() {
     setLiveCode(template.html);
     setCurrentDriveId(undefined);
     setDriveWebViewLink(undefined);
+    lastSavedCodeRef.current = template.html;
+    lastAutoSaveAttemptRef.current = Date.now();
     setConsoleMessages([]);
     showToast(`Loaded "${template.title}" template!`, 'success');
   };
@@ -135,6 +228,8 @@ export default function App() {
     setLiveCode(content);
     setCurrentDriveId(driveFileId);
     setDriveWebViewLink(webViewLink);
+    lastSavedCodeRef.current = content;
+    lastAutoSaveAttemptRef.current = Date.now();
     setConsoleMessages([]);
     showToast(`Loaded "${name}" from Google Drive!`, 'success');
   };
@@ -143,12 +238,21 @@ export default function App() {
     setCurrentDriveId(driveId);
     setDriveWebViewLink(webViewLink);
     setFileName(name);
+    lastSavedCodeRef.current = code;
+    lastAutoSaveAttemptRef.current = Date.now();
+    const timeString = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    setLastAutoSavedTime(timeString);
     showToast(`Saved "${name}" to Google Drive!`, 'success');
   };
 
   // Quick 1-click Save to Drive from navbar
   const handleQuickSaveToDrive = async () => {
     if (!user) {
+      setDriveModalTab('save');
       setIsDriveOpen(true);
       return;
     }
@@ -160,6 +264,14 @@ export default function App() {
       setCurrentDriveId(result.id);
       setDriveWebViewLink(result.webViewLink);
       setFileName(result.name);
+      lastSavedCodeRef.current = code;
+      lastAutoSaveAttemptRef.current = Date.now();
+      const timeString = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      setLastAutoSavedTime(timeString);
       showToast(`Saved "${result.name}" to Google Drive!`, 'success');
     } catch (err: any) {
       showToast(err.message || 'Failed to save to Drive', 'error');
@@ -343,8 +455,15 @@ export default function App() {
         viewport={viewport}
         onViewportChange={setViewport}
         onOpenUpload={() => setIsUploadOpen(true)}
-        onOpenDriveBrowse={() => setIsDriveOpen(true)}
+        onOpenDriveBrowse={() => {
+          setDriveModalTab('browse');
+          setIsDriveOpen(true);
+        }}
         onSaveToDrive={handleQuickSaveToDrive}
+        onOpenDriveSettings={() => {
+          setDriveModalTab('settings');
+          setIsDriveOpen(true);
+        }}
         onOpenExport={() => setIsExportOpen(true)}
         onOpenInspector={() => setIsInspectorOpen(true)}
         onOpenTemplates={() => setIsTemplatesOpen(true)}
@@ -355,6 +474,9 @@ export default function App() {
         onSignOut={handleSignOut}
         isSavingDrive={isSavingDrive}
         hasDriveId={Boolean(currentDriveId)}
+        isAutoSaveEnabled={isAutoSaveEnabled}
+        isAutoSaving={isAutoSaving}
+        lastAutoSavedTime={lastAutoSavedTime}
         isHighlightMode={isHighlightMode}
         onToggleHighlightMode={() => setIsHighlightMode((prev) => !prev)}
       />
@@ -366,7 +488,7 @@ export default function App() {
           <div className={`${viewMode === 'split' ? 'w-1/2 min-w-[320px]' : 'w-full'} h-full flex flex-col`}>
             <CodeEditor
               code={code}
-              onChange={setCode}
+              onChange={handleCodeChange}
               onRun={handleManualRun}
               autoRun={autoRun}
               onToggleAutoRun={setAutoRun}
@@ -424,6 +546,11 @@ export default function App() {
         currentFileName={fileName}
         currentCode={code}
         currentDriveId={currentDriveId}
+        isAutoSaveEnabled={isAutoSaveEnabled}
+        onToggleAutoSave={handleToggleAutoSave}
+        isAutoSaving={isAutoSaving}
+        lastAutoSavedTime={lastAutoSavedTime}
+        initialTab={driveModalTab}
         onFileLoadedFromDrive={handleFileLoadedFromDrive}
         onDriveSaveSuccess={handleDriveSaveSuccess}
       />

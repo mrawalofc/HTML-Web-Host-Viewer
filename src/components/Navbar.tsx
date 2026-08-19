@@ -19,7 +19,10 @@ import {
   Laptop,
   Monitor,
   Maximize2,
-  Crosshair
+  Crosshair,
+  Settings,
+  CloudUpload,
+  RotateCcw
 } from 'lucide-react';
 import { ViewMode, ViewportDevice } from '../types';
 import { User } from 'firebase/auth';
@@ -34,6 +37,7 @@ interface NavbarProps {
   onOpenUpload: () => void;
   onOpenDriveBrowse: () => void;
   onSaveToDrive: () => void;
+  onOpenDriveSettings?: () => void;
   onOpenExport: () => void;
   onOpenInspector: () => void;
   onOpenTemplates: () => void;
@@ -44,6 +48,9 @@ interface NavbarProps {
   onSignOut: () => void;
   isSavingDrive: boolean;
   hasDriveId?: boolean;
+  isAutoSaveEnabled?: boolean;
+  isAutoSaving?: boolean;
+  lastAutoSavedTime?: string | null;
   isHighlightMode?: boolean;
   onToggleHighlightMode?: () => void;
 }
@@ -58,6 +65,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenUpload,
   onOpenDriveBrowse,
   onSaveToDrive,
+  onOpenDriveSettings,
   onOpenExport,
   onOpenInspector,
   onOpenTemplates,
@@ -68,6 +76,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSignOut,
   isSavingDrive,
   hasDriveId,
+  isAutoSaveEnabled = false,
+  isAutoSaving = false,
+  lastAutoSavedTime = null,
   isHighlightMode,
   onToggleHighlightMode,
 }) => {
@@ -221,7 +232,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="flex items-center gap-1 bg-slate-800/90 p-0.5 rounded-lg border border-slate-700">
               <button
                 onClick={onSaveToDrive}
-                disabled={isSavingDrive}
+                disabled={isSavingDrive || isAutoSaving}
                 className="flex items-center gap-1 px-2 py-1 text-xs text-slate-200 hover:text-cyan-300 hover:bg-slate-700/60 rounded transition-colors disabled:opacity-50"
                 title="Save current HTML file to your Google Drive"
               >
@@ -236,6 +247,37 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
                 <span className="hidden lg:inline">Drive Files</span>
+              </button>
+
+              {/* Auto-Save Status / Settings Pill */}
+              <button
+                onClick={onOpenDriveSettings}
+                className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-all border ${
+                  isAutoSaveEnabled
+                    ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                    : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-slate-700/60'
+                }`}
+                title={
+                  isAutoSaveEnabled
+                    ? `Auto-Save is active (every 30s while typing) • ${
+                        lastAutoSavedTime ? `Last saved: ${lastAutoSavedTime}` : 'Awaiting edits'
+                      }. Click to open settings.`
+                    : 'Configure Google Drive Auto-Save settings'
+                }
+              >
+                {isAutoSaving ? (
+                  <RotateCcw className="w-3 h-3 text-amber-400 animate-spin" />
+                ) : isAutoSaveEnabled ? (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                ) : (
+                  <Settings className="w-3 h-3 text-slate-400" />
+                )}
+                <span className="hidden xl:inline text-[11px] font-medium">
+                  {isAutoSaving ? 'Auto-saving...' : isAutoSaveEnabled ? 'Auto-Save ON' : 'Settings'}
+                </span>
               </button>
             </div>
           ) : (
@@ -347,6 +389,23 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <Save className="w-3.5 h-3.5 text-blue-400" />
                     <span>Save Current to Drive</span>
                   </button>
+                  {onOpenDriveSettings && (
+                    <button
+                      onClick={() => {
+                        setUserDropdownOpen(false);
+                        onOpenDriveSettings();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs text-slate-300 hover:bg-slate-800 flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Settings className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Auto-Save Settings</span>
+                      </div>
+                      {isAutoSaveEnabled && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                      )}
+                    </button>
+                  )}
                   <div className="border-t border-slate-800 my-1"></div>
                   <button
                     onClick={() => {

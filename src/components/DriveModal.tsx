@@ -12,7 +12,13 @@ import {
   HardDrive,
   Check,
   AlertCircle,
-  ArrowRight
+  ArrowRight,
+  Settings,
+  Clock,
+  CloudCheck,
+  CloudUpload,
+  Sparkles,
+  ShieldCheck
 } from 'lucide-react';
 import { DriveFileItem } from '../types';
 import { listHtmlFiles, fetchFileContent, saveHtmlToDrive, deleteDriveFile } from '../services/drive';
@@ -26,6 +32,11 @@ interface DriveModalProps {
   currentFileName: string;
   currentCode: string;
   currentDriveId?: string;
+  isAutoSaveEnabled: boolean;
+  onToggleAutoSave: (enabled: boolean) => void;
+  isAutoSaving?: boolean;
+  lastAutoSavedTime?: string | null;
+  initialTab?: 'browse' | 'save' | 'settings';
   onFileLoadedFromDrive: (name: string, content: string, driveFileId: string, webViewLink?: string) => void;
   onDriveSaveSuccess: (driveId: string, name: string, webViewLink?: string) => void;
 }
@@ -37,10 +48,15 @@ export const DriveModal: React.FC<DriveModalProps> = ({
   currentFileName,
   currentCode,
   currentDriveId,
+  isAutoSaveEnabled,
+  onToggleAutoSave,
+  isAutoSaving = false,
+  lastAutoSavedTime = null,
+  initialTab = 'browse',
   onFileLoadedFromDrive,
   onDriveSaveSuccess,
 }) => {
-  const [activeTab, setActiveTab] = useState<'browse' | 'save'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'save' | 'settings'>(initialTab);
   const [driveFiles, setDriveFiles] = useState<DriveFileItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -51,12 +67,15 @@ export const DriveModal: React.FC<DriveModalProps> = ({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen && user) {
-      loadFiles();
-      setSaveFileName(currentFileName);
-      setOverwriteExisting(Boolean(currentDriveId));
+    if (isOpen) {
+      setActiveTab(initialTab);
+      if (user) {
+        loadFiles();
+        setSaveFileName(currentFileName);
+        setOverwriteExisting(Boolean(currentDriveId));
+      }
     }
-  }, [isOpen, user, currentFileName, currentDriveId]);
+  }, [isOpen, user, currentFileName, currentDriveId, initialTab]);
 
   const loadFiles = async () => {
     setLoading(true);
@@ -171,7 +190,7 @@ export const DriveModal: React.FC<DriveModalProps> = ({
               }`}
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>Browse Drive Files ({driveFiles.length})</span>
+              <span>Browse Drive ({driveFiles.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('save')}
@@ -182,7 +201,21 @@ export const DriveModal: React.FC<DriveModalProps> = ({
               }`}
             >
               <Save className="w-3.5 h-3.5" />
-              <span>Save Current to Drive</span>
+              <span>Save to Drive</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`pb-2 px-3 text-xs font-medium border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'settings'
+                  ? 'border-amber-500 text-amber-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>Auto-Save & Settings</span>
+              {isAutoSaveEnabled && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              )}
             </button>
           </div>
 
@@ -333,7 +366,7 @@ export const DriveModal: React.FC<DriveModalProps> = ({
                 </div>
               )}
             </div>
-          ) : (
+          ) : activeTab === 'save' ? (
             <div className="space-y-4">
               <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3">
                 <div>
@@ -369,6 +402,31 @@ export const DriveModal: React.FC<DriveModalProps> = ({
                 </div>
               </div>
 
+              {/* Auto-Save Promo Card inside Save Tab */}
+              <div className="p-3.5 bg-gradient-to-r from-amber-500/10 via-slate-900/50 to-blue-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400">
+                    <CloudUpload className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-200">Continuous Auto-Save</h4>
+                    <p className="text-[11px] text-slate-400">
+                      Automatically save to Drive every 30s while actively typing.
+                    </p>
+                  </div>
+                </div>
+
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={isAutoSaveEnabled}
+                    onChange={(e) => onToggleAutoSave(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+              </div>
+
               <div className="flex justify-end">
                 <button
                   onClick={handleSaveToDrive}
@@ -377,6 +435,147 @@ export const DriveModal: React.FC<DriveModalProps> = ({
                 >
                   <Save className={`w-4 h-4 ${saving ? 'animate-spin' : ''}`} />
                   <span>{saving ? 'Saving to Google Drive...' : 'Save File to Drive'}</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Auto-Save & Settings Tab */
+            <div className="space-y-4">
+              {/* Primary Toggle Hero Card */}
+              <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`p-2.5 rounded-xl border transition-colors ${
+                        isAutoSaveEnabled
+                          ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                          : 'bg-slate-800 border-slate-700 text-slate-500'
+                      }`}
+                    >
+                      <CloudUpload className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-100">
+                          Auto-Save to Google Drive
+                        </h3>
+                        {isAutoSaveEnabled ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px] font-mono flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            Active
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[10px] font-mono">
+                            Disabled
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1 max-w-md">
+                        Triggers a background save to your Google Drive every 30 seconds while you are actively typing in the Code Editor.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Toggle Switch */}
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+                    <input
+                      type="checkbox"
+                      checked={isAutoSaveEnabled}
+                      onChange={(e) => onToggleAutoSave(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 shadow-inner"></div>
+                  </label>
+                </div>
+
+                {/* Auto-Save Specifications */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-3 border-t border-slate-800/80 text-xs">
+                  <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                    <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                      <Clock className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="font-medium text-[11px]">Save Interval</span>
+                    </div>
+                    <p className="font-mono text-slate-200 text-xs font-semibold">Every 30 seconds</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">While actively typing</p>
+                  </div>
+
+                  <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                    <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                      <CloudCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="font-medium text-[11px]">Last Saved</span>
+                    </div>
+                    <p className="font-mono text-slate-200 text-xs font-semibold">
+                      {isAutoSaving ? (
+                        <span className="text-amber-400 flex items-center gap-1">
+                          <RotateCcw className="w-3 h-3 animate-spin" />
+                          Saving...
+                        </span>
+                      ) : lastAutoSavedTime ? (
+                        lastAutoSavedTime
+                      ) : (
+                        'Not saved yet'
+                      )}
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      {lastAutoSavedTime ? 'Background synced' : 'Awaiting edits'}
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                    <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                      <FileCode className="w-3.5 h-3.5 text-cyan-400" />
+                      <span className="font-medium text-[11px]">Target File</span>
+                    </div>
+                    <p className="font-mono text-slate-200 text-xs font-semibold truncate" title={currentFileName}>
+                      {currentFileName}
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      {currentDriveId ? `ID: ${currentDriveId.slice(0, 8)}...` : 'Will auto-link'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Information Cards */}
+              <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 space-y-2.5">
+                <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-amber-400" />
+                  <span>How Background Auto-Save Works</span>
+                </h4>
+                <ul className="space-y-1.5 text-[11.5px] text-slate-400">
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0"></span>
+                    <span>
+                      <strong className="text-slate-300">Active Typing Detection:</strong> Background saves only run when new edits have been detected in the code editor, saving API quota and bandwidth.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0"></span>
+                    <span>
+                      <strong className="text-slate-300">Non-blocking Execution:</strong> Runs seamlessly in the background with real-time status indicators without interrupting your cursor or editor workflow.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0"></span>
+                    <span>
+                      <strong className="text-slate-300">Direct Google Drive Sync:</strong> Directly patches your file on Google Drive so you can open or host it anywhere.
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Immediate Save action button */}
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-xs text-slate-400">
+                  Prefer a manual snapshot?
+                </span>
+                <button
+                  onClick={handleSaveToDrive}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  <Save className={`w-3.5 h-3.5 ${saving ? 'animate-spin' : ''}`} />
+                  <span>{saving ? 'Saving...' : 'Save to Drive Now'}</span>
                 </button>
               </div>
             </div>
