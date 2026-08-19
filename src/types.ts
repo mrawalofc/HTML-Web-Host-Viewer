@@ -89,6 +89,8 @@ export interface InspectedElement {
 
 export type LintSeverity = 'error' | 'warning' | 'info';
 
+export type EditorTheme = 'dark' | 'light';
+
 export interface CssLintDiagnostic {
   id: string;
   line: number;

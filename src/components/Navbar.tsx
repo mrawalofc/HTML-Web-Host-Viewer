@@ -179,9 +179,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className={`p-1.5 rounded-md transition-colors ${
                   viewport === 'desktop' ? 'bg-slate-800 text-cyan-400' : 'text-slate-400 hover:text-slate-200'
                 }`}
-                title="Desktop View (1440px)"
+                title="Desktop View (1280px)"
               >
                 <Monitor className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onViewportChange('laptop')}
+                className={`p-1.5 rounded-md transition-colors ${
+                  viewport === 'laptop' ? 'bg-slate-800 text-cyan-400' : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Laptop View (1024px)"
+              >
+                <Laptop className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => onViewportChange('tablet')}

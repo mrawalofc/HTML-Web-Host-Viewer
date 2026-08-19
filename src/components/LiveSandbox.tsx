@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   RotateCcw,
+  RotateCw,
   ExternalLink,
   Maximize2,
   Minimize2,
@@ -15,9 +16,16 @@ import {
   ShieldCheck,
   Sparkles,
   MousePointerClick,
-  Crosshair
+  Crosshair,
+  ChevronDown,
+  Scan
 } from 'lucide-react';
 import { ViewportDevice, ConsoleMessage, InspectedElement } from '../types';
+import {
+  DEVICE_PRESETS,
+  DEFAULT_PRESET_FOR_DEVICE,
+  DevicePreset
+} from '../services/viewportPresets';
 
 interface LiveSandboxProps {
   htmlCode: string;
@@ -52,6 +60,110 @@ export const LiveSandbox: React.FC<LiveSandboxProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
+
+  // Selected device preset & orientation
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(() => {
+    return DEFAULT_PRESET_FOR_DEVICE[viewport]?.id || 'responsive';
+  });
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [isPresetsDropdownOpen, setIsPresetsDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Sync preset if external viewport prop changes
+  useEffect(() => {
+    const defaultPreset = DEFAULT_PRESET_FOR_DEVICE[viewport];
+    if (defaultPreset && defaultPreset.id !== selectedPresetId) {
+      setSelectedPresetId(defaultPreset.id);
+    }
+  }, [viewport]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsPresetsDropdownOpen(false);
+      }
+    };
+    if (isPresetsDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isPresetsDropdownOpen]);
+
+  // Find active preset object
+  const activePreset = useMemo(() => {
+    return (
+      DEVICE_PRESETS.find((p) => p.id === selectedPresetId) ||
+      DEFAULT_PRESET_FOR_DEVICE[viewport] ||
+      DEVICE_PRESETS[0]
+    );
+  }, [selectedPresetId, viewport]);
+
+  // Calculate actual pixel dimensions considering orientation
+  const dimensions = useMemo(() => {
+    if (activePreset.category === 'responsive' || activePreset.width === 0) {
+      return { width: '100%', height: '100%', rawW: 0, rawH: 0, label: 'Responsive (100% Fluid)' };
+    }
+
+    let w = activePreset.width;
+    let h = activePreset.height;
+
+    // Apply orientation swap if landscape on vertical-first devices or vice versa
+    if (orientation === 'landscape') {
+      if (w < h) {
+        const temp = w;
+        w = h;
+        h = temp;
+      }
+    } else {
+      if (w > h && (activePreset.category === 'mobile' || activePreset.category === 'tablet')) {
+        const temp = w;
+        w = h;
+        h = temp;
+      }
+    }
+
+    return {
+      width: `${w}px`,
+      height: `${h}px`,
+      rawW: w,
+      rawH: h,
+      label: `${activePreset.name} • ${w} × ${h}px${orientation === 'landscape' ? ' (Landscape)' : ''}`,
+    };
+  }, [activePreset, orientation]);
+
+  // Select a preset and notify parent
+  const handleSelectPreset = (preset: DevicePreset) => {
+    setSelectedPresetId(preset.id);
+    onViewportChange(preset.deviceType);
+    setIsPresetsDropdownOpen(false);
+  };
+
+  // Toggle orientation
+  const handleToggleOrientation = () => {
+    setOrientation((prev) => (prev === 'portrait' ? 'landscape' : 'portrait'));
+  };
+
+  // Auto-fit device scale into available canvas area
+  const handleAutoFit = () => {
+    if (!canvasAreaRef.current || dimensions.rawW === 0 || dimensions.rawH === 0) {
+      setScale(1);
+      return;
+    }
+    const canvas = canvasAreaRef.current;
+    const padding = 48; // padding margin
+    const availableW = canvas.clientWidth - padding;
+    const availableH = canvas.clientHeight - padding;
+
+    const scaleW = availableW / dimensions.rawW;
+    const scaleH = availableH / dimensions.rawH;
+    const bestScale = Math.min(1, scaleW, scaleH);
+
+    setScale(Math.max(0.3, Math.round(bestScale * 100) / 100));
+  };
 
   // Script to intercept console logs, runtime errors, and DOM Element Highlight Mode
   const sandboxInstrumentationScript = `
@@ -371,26 +483,321 @@ export const LiveSandbox: React.FC<LiveSandboxProps> = ({
       }`}
     >
       {/* Sandbox Navigation Bar */}
-      <div className="bg-slate-900 px-3 py-2 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
-        {/* Left: Device / Frame selector & Highlight Indicator */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs text-slate-300 font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-            <span>Live Runner</span>
+      <div className="bg-slate-900 px-3 py-2 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        {/* Left: Device Presets Segmented Group & Model Dropdown */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Live Runner Status Badge */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-300 font-semibold shrink-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span className="hidden xl:inline">Live Runner</span>
           </div>
 
-          <span className="text-[11px] text-slate-500 hidden sm:inline">• {currentDim.label}</span>
+          {/* Quick Device Category Segmented Buttons */}
+          <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 shadow-inner">
+            {/* Responsive Fluid */}
+            <button
+              onClick={() => handleSelectPreset(DEVICE_PRESETS[0])}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+                activePreset.category === 'responsive'
+                  ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+              }`}
+              title="Responsive (100% Fluid Container Width & Height)"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Fluid</span>
+            </button>
 
+            {/* Mobile Preset */}
+            <button
+              onClick={() => {
+                const mobilePreset =
+                  DEVICE_PRESETS.find((p) => p.id === selectedPresetId && p.category === 'mobile') ||
+                  DEFAULT_PRESET_FOR_DEVICE.mobile;
+                handleSelectPreset(mobilePreset);
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+                activePreset.category === 'mobile'
+                  ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+              }`}
+              title="Mobile Screen Presets (375 × 667 px)"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Mobile</span>
+            </button>
+
+            {/* Tablet Preset */}
+            <button
+              onClick={() => {
+                const tabletPreset =
+                  DEVICE_PRESETS.find((p) => p.id === selectedPresetId && p.category === 'tablet') ||
+                  DEFAULT_PRESET_FOR_DEVICE.tablet;
+                handleSelectPreset(tabletPreset);
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+                activePreset.category === 'tablet'
+                  ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+              }`}
+              title="Tablet Screen Presets (768 × 1024 px)"
+            >
+              <Tablet className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Tablet</span>
+            </button>
+
+            {/* Laptop Preset */}
+            <button
+              onClick={() => {
+                const laptopPreset =
+                  DEVICE_PRESETS.find((p) => p.id === selectedPresetId && p.category === 'laptop') ||
+                  DEFAULT_PRESET_FOR_DEVICE.laptop;
+                handleSelectPreset(laptopPreset);
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+                activePreset.category === 'laptop'
+                  ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+              }`}
+              title="Laptop Screen Presets (1024 × 680 px)"
+            >
+              <Laptop className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Laptop</span>
+            </button>
+
+            {/* Desktop Preset */}
+            <button
+              onClick={() => {
+                const desktopPreset =
+                  DEVICE_PRESETS.find((p) => p.id === selectedPresetId && p.category === 'desktop') ||
+                  DEFAULT_PRESET_FOR_DEVICE.desktop;
+                handleSelectPreset(desktopPreset);
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+                activePreset.category === 'desktop'
+                  ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+              }`}
+              title="Desktop Screen Presets (1280 × 800 px)"
+            >
+              <Monitor className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Desktop</span>
+            </button>
+          </div>
+
+          {/* Detailed Screen Model Dropdown Popover */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => setIsPresetsDropdownOpen(!isPresetsDropdownOpen)}
+              className="flex items-center gap-1.5 px-2 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-md text-[11px] text-slate-300 font-mono transition-colors shadow-sm"
+              title="Select Specific Screen Size Preset"
+            >
+              <span className="truncate max-w-[130px] font-sans font-medium text-slate-200">
+                {activePreset.shortName}
+              </span>
+              <ChevronDown
+                className={`w-3 h-3 text-slate-400 transition-transform duration-150 ${
+                  isPresetsDropdownOpen ? 'rotate-180 text-cyan-400' : ''
+                }`}
+              />
+            </button>
+
+            {/* Dropdown Menu */}
+            {isPresetsDropdownOpen && (
+              <div className="absolute left-0 top-full mt-1.5 z-50 w-72 bg-slate-900/98 backdrop-blur-md border border-slate-700/90 rounded-xl shadow-2xl overflow-hidden animate-fadeIn py-1">
+                <div className="px-3 py-1.5 border-b border-slate-800 text-[10px] uppercase font-bold tracking-wider text-slate-400 flex items-center justify-between">
+                  <span>Device Screen Presets</span>
+                  <span className="text-cyan-400 font-mono">Dynamic Resizing</span>
+                </div>
+
+                <div className="max-h-72 overflow-y-auto divide-y divide-slate-800/60 text-xs">
+                  {/* Responsive */}
+                  <div className="p-1">
+                    <button
+                      onClick={() => handleSelectPreset(DEVICE_PRESETS[0])}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                        activePreset.id === 'responsive'
+                          ? 'bg-cyan-500/20 text-cyan-200 font-semibold'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Maximize2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                        <div>
+                          <p className="text-xs">Responsive (Fluid)</p>
+                          <p className="text-[10px] text-slate-400">100% Full Canvas</p>
+                        </div>
+                      </div>
+                      {activePreset.id === 'responsive' && <Check className="w-3.5 h-3.5 text-cyan-400" />}
+                    </button>
+                  </div>
+
+                  {/* Mobile Group */}
+                  <div className="p-1">
+                    <p className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <Smartphone className="w-3 h-3 text-cyan-500" />
+                      Mobile Phones
+                    </p>
+                    {DEVICE_PRESETS.filter((p) => p.category === 'mobile').map((preset) => (
+                      <button
+                        key={preset.id}
+                        onClick={() => handleSelectPreset(preset)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                          activePreset.id === preset.id
+                            ? 'bg-cyan-500/20 text-cyan-200 font-semibold'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div>
+                          <p className="text-xs">{preset.name}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            {preset.width} × {preset.height} px
+                          </p>
+                        </div>
+                        {activePreset.id === preset.id && <Check className="w-3.5 h-3.5 text-cyan-400" />}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Tablet Group */}
+                  <div className="p-1">
+                    <p className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <Tablet className="w-3 h-3 text-cyan-500" />
+                      Tablets
+                    </p>
+                    {DEVICE_PRESETS.filter((p) => p.category === 'tablet').map((preset) => (
+                      <button
+                        key={preset.id}
+                        onClick={() => handleSelectPreset(preset)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                          activePreset.id === preset.id
+                            ? 'bg-cyan-500/20 text-cyan-200 font-semibold'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div>
+                          <p className="text-xs">{preset.name}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            {preset.width} × {preset.height} px
+                          </p>
+                        </div>
+                        {activePreset.id === preset.id && <Check className="w-3.5 h-3.5 text-cyan-400" />}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Laptop & Desktop Group */}
+                  <div className="p-1">
+                    <p className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <Monitor className="w-3 h-3 text-cyan-500" />
+                      Laptops & Desktops
+                    </p>
+                    {DEVICE_PRESETS.filter((p) => p.category === 'laptop' || p.category === 'desktop').map(
+                      (preset) => (
+                        <button
+                          key={preset.id}
+                          onClick={() => handleSelectPreset(preset)}
+                          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                            activePreset.id === preset.id
+                              ? 'bg-cyan-500/20 text-cyan-200 font-semibold'
+                              : 'text-slate-300 hover:bg-slate-800'
+                          }`}
+                        >
+                          <div>
+                            <p className="text-xs">{preset.name}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">
+                              {preset.width} × {preset.height} px
+                            </p>
+                          </div>
+                          {activePreset.id === preset.id && <Check className="w-3.5 h-3.5 text-cyan-400" />}
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Orientation Toggle Button (Portrait ↔ Landscape) */}
+          {activePreset.width > 0 && (
+            <button
+              onClick={handleToggleOrientation}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium border transition-colors ${
+                orientation === 'landscape'
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
+                  : 'bg-slate-950 text-slate-300 hover:text-white border-slate-800 hover:border-slate-700'
+              }`}
+              title={`Switch Device Orientation (Current: ${
+                orientation === 'portrait' ? 'Portrait' : 'Landscape'
+              })`}
+            >
+              <RotateCw className="w-3 h-3 text-cyan-400" />
+              <span className="hidden sm:inline capitalize">{orientation}</span>
+            </button>
+          )}
+
+          {/* Pixel Dimension Pill */}
+          {dimensions.rawW > 0 && (
+            <span className="hidden lg:flex items-center gap-1 text-[10px] font-mono text-cyan-300/90 bg-cyan-950/60 border border-cyan-800/40 px-2 py-0.5 rounded-full">
+              {dimensions.rawW} × {dimensions.rawH} px
+            </span>
+          )}
+
+          {/* Highlight Mode Active Notification */}
           {isHighlightMode && (
             <span className="flex items-center gap-1 text-[10px] font-semibold bg-cyan-950/90 text-cyan-300 border border-cyan-500/50 px-2 py-0.5 rounded-full animate-pulse">
               <Crosshair className="w-3 h-3 text-cyan-400" />
-              <span>Highlight Mode: Click to inspect</span>
+              <span className="hidden md:inline">Inspect Mode</span>
             </span>
           )}
         </div>
 
-        {/* Center/Right Controls */}
-        <div className="flex items-center gap-1.5">
+        {/* Center/Right Controls: Zoom, Scale, Inspect, Console, Refresh, Popout */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Zoom & Auto-Fit Controls (Active when non-responsive preset) */}
+          {activePreset.width > 0 && (
+            <div className="flex items-center bg-slate-950 px-1 py-0.5 rounded-lg border border-slate-800 text-[11px] text-slate-300">
+              {/* Auto-Fit Button */}
+              <button
+                onClick={handleAutoFit}
+                className="p-1 hover:text-cyan-400 transition-colors"
+                title="Auto-Fit device screen to current container size"
+              >
+                <Scan className="w-3 h-3" />
+              </button>
+
+              <div className="w-px h-3 bg-slate-800 mx-0.5" />
+
+              {/* Zoom Out */}
+              <button
+                onClick={() => setScale((s) => Math.max(0.3, Math.round((s - 0.1) * 10) / 10))}
+                className="p-1 hover:text-white transition-colors"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-3 h-3" />
+              </button>
+
+              {/* Scale Reset Pill */}
+              <button
+                onClick={() => setScale(1)}
+                className="px-1.5 font-mono text-[10.5px] hover:text-cyan-300 transition-colors"
+                title="Click to reset zoom to 100%"
+              >
+                {Math.round(scale * 100)}%
+              </button>
+
+              {/* Zoom In */}
+              <button
+                onClick={() => setScale((s) => Math.min(1.6, Math.round((s + 0.1) * 10) / 10))}
+                className="p-1 hover:text-white transition-colors"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
           {/* Highlight Mode Toggle */}
           <button
             onClick={onToggleHighlightMode}
@@ -407,30 +814,9 @@ export const LiveSandbox: React.FC<LiveSandboxProps> = ({
           >
             <Crosshair className={`w-3.5 h-3.5 ${isHighlightMode ? 'text-cyan-400 animate-spin-slow' : ''}`} />
             <span className="hidden md:inline">
-              {isHighlightMode ? 'Highlight Active' : 'Highlight Mode'}
+              {isHighlightMode ? 'Highlight Active' : 'Highlight'}
             </span>
           </button>
-
-          {/* Zoom controls (for fixed device frames) */}
-          {viewport !== 'responsive' && (
-            <div className="flex items-center bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 text-[11px] text-slate-300">
-              <button
-                onClick={() => setScale((s) => Math.max(0.5, s - 0.1))}
-                className="p-1 hover:text-white"
-                title="Zoom Out"
-              >
-                <ZoomOut className="w-3 h-3" />
-              </button>
-              <span className="px-1 font-mono">{Math.round(scale * 100)}%</span>
-              <button
-                onClick={() => setScale((s) => Math.min(1.5, s + 0.1))}
-                className="p-1 hover:text-white"
-                title="Zoom In"
-              >
-                <ZoomIn className="w-3 h-3" />
-              </button>
-            </div>
-          )}
 
           {/* Console Drawer Trigger */}
           <button
@@ -483,10 +869,14 @@ export const LiveSandbox: React.FC<LiveSandboxProps> = ({
         </div>
       </div>
 
-      {/* Frame Canvas Area */}
-      <div className="flex-1 bg-slate-950/70 p-2 sm:p-4 overflow-auto flex items-center justify-center relative">
-        {viewport === 'responsive' ? (
-          <div className="w-full h-full bg-white rounded-lg shadow-xl overflow-hidden border border-slate-800 relative">
+      {/* Dynamic Frame Canvas Area */}
+      <div
+        ref={canvasAreaRef}
+        className="flex-1 bg-slate-950/80 p-2 sm:p-4 overflow-auto flex items-center justify-center relative"
+      >
+        {activePreset.category === 'responsive' || activePreset.width === 0 ? (
+          /* Responsive Edge-to-Edge Container */
+          <div className="w-full h-full bg-white rounded-lg shadow-xl overflow-hidden border border-slate-800 relative transition-all duration-300 ease-out">
             <iframe
               key={reloadKey}
               ref={iframeRef}
@@ -497,23 +887,55 @@ export const LiveSandbox: React.FC<LiveSandboxProps> = ({
             />
           </div>
         ) : (
+          /* Realistic Resizable Device Container with Chassis and Shadows */
           <div
             style={{
-              width: currentDim.width,
-              height: currentDim.height,
+              width: dimensions.width,
+              height: dimensions.height,
               transform: `scale(${scale})`,
               transformOrigin: 'center center',
-              transition: 'all 0.2s ease-out',
+              transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s ease-out',
             }}
-            className="bg-white rounded-2xl shadow-2xl overflow-hidden border-4 border-slate-700 relative flex flex-col shrink-0"
+            className={`bg-white shadow-2xl overflow-hidden relative flex flex-col shrink-0 border-4 border-slate-700/90 ${
+              activePreset.category === 'mobile'
+                ? 'rounded-[32px] ring-1 ring-slate-600/50'
+                : activePreset.category === 'tablet'
+                ? 'rounded-[24px] ring-1 ring-slate-600/50'
+                : 'rounded-xl ring-1 ring-slate-600/50'
+            }`}
           >
-            {/* Mock device status bar */}
-            <div className="bg-slate-900 text-slate-400 px-3 py-1 text-[10px] flex items-center justify-between border-b border-slate-800 shrink-0">
-              <span className="font-mono">9:41 AM</span>
-              <div className="w-12 h-1 bg-slate-700 rounded-full mx-auto"></div>
-              <span>100% ⚡</span>
-            </div>
+            {/* Realistic Top Device Bar */}
+            {activePreset.category === 'mobile' || activePreset.category === 'tablet' ? (
+              <div className="bg-slate-950 text-slate-400 px-4 py-1.5 text-[10px] flex items-center justify-between border-b border-slate-800 shrink-0 select-none">
+                <span className="font-mono font-medium text-slate-300">9:41</span>
+                {/* Smartphone Dynamic Island / Speaker notch */}
+                <div className="w-16 h-3 bg-slate-900 rounded-full border border-slate-800/80 flex items-center justify-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                  <div className="w-1 h-1 rounded-full bg-cyan-500/80" />
+                </div>
+                <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                  <span>5G</span>
+                  <span>100% ⚡</span>
+                </div>
+              </div>
+            ) : (
+              /* Laptop / Desktop Browser Mock Titlebar */
+              <div className="bg-slate-900 text-slate-400 px-3 py-1.5 text-[11px] flex items-center justify-between border-b border-slate-800 shrink-0 select-none">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500/90 block"></span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500/90 block"></span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/90 block"></span>
+                </div>
+                <div className="bg-slate-950 text-slate-400 px-3 py-0.5 rounded-md border border-slate-800 font-mono text-[10px] max-w-[200px] truncate text-center">
+                  https://preview.local/sandbox
+                </div>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {dimensions.rawW} × {dimensions.rawH}
+                </span>
+              </div>
+            )}
 
+            {/* Sandboxed iFrame */}
             <iframe
               key={reloadKey}
               ref={iframeRef}
@@ -522,6 +944,13 @@ export const LiveSandbox: React.FC<LiveSandboxProps> = ({
               sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-same-origin"
               className="w-full flex-1 border-0 block"
             />
+
+            {/* Mobile Home Bar Pill Indicator */}
+            {(activePreset.category === 'mobile' || activePreset.category === 'tablet') && (
+              <div className="bg-slate-950 py-1 flex items-center justify-center shrink-0 border-t border-slate-900">
+                <div className="w-24 h-1 bg-slate-600 rounded-full" />
+              </div>
+            )}
           </div>
         )}
       </div>

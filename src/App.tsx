@@ -10,7 +10,7 @@ import { TemplatesModal } from './components/TemplatesModal';
 import { ExportModal } from './components/ExportModal';
 import { HtmlInspectorModal } from './components/HtmlInspectorModal';
 import { STARTER_TEMPLATES } from './services/templates';
-import { ViewMode, ViewportDevice, ConsoleMessage, UploadedFile, TemplateProject, InspectedElement, ElementLocation } from './types';
+import { ViewMode, ViewportDevice, ConsoleMessage, UploadedFile, TemplateProject, InspectedElement, ElementLocation, EditorTheme } from './types';
 import { initAuth, googleSignIn, logout, getAccessToken } from './services/auth';
 import { saveHtmlToDrive } from './services/drive';
 import { locateElementInCode } from './services/elementLocator';
@@ -24,6 +24,28 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [viewport, setViewport] = useState<ViewportDevice>('responsive');
   const [autoRun, setAutoRun] = useState<boolean>(true);
+
+  // Editor Theme state (Light / Dark)
+  const [editorTheme, setEditorTheme] = useState<EditorTheme>(() => {
+    try {
+      const saved = localStorage.getItem('htmlhost_editor_theme');
+      return saved === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
+  const handleToggleEditorTheme = () => {
+    setEditorTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      try {
+        localStorage.setItem('htmlhost_editor_theme', next);
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // Highlight Mode & Element Inspector state
   const [isHighlightMode, setIsHighlightMode] = useState<boolean>(false);
@@ -493,6 +515,8 @@ export default function App() {
               autoRun={autoRun}
               onToggleAutoRun={setAutoRun}
               fileName={fileName}
+              theme={editorTheme}
+              onToggleTheme={handleToggleEditorTheme}
               focusedElement={selectedElement}
               focusedElementLocation={focusedElementLocation}
               onClearFocusedElement={() => {
